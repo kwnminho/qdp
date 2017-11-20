@@ -3,6 +3,7 @@ import h5py
 import numpy as np
 from sklearn import mixture
 from scipy import special
+from scipy import optimize
 
 
 def intersection(A0, A1, m0, m1, s0, s1):
@@ -26,7 +27,7 @@ def frac(A0, A1, m0, m1, s0, s1):
 
 
 def dblgauss(x, A0, A1, m0, m1, s0, s1):
-    return A0*np.exp(-(x-m0)**2 / (2*s0**2)) + A1*np.exp(-(x-m1)**2 / (2*s1**2))
+    return A0*np.exp(-(x-m0)**2 / (2*s0**2))/np.sqrt(2*np.pi*s0**2) + A1*np.exp(-(x-m1)**2 / (2*s1**2))/np.sqrt(2*np.pi*s1**2)
 
 
 def is_iterated(func):
@@ -57,6 +58,12 @@ def get_iteration_variables(h5file, iterations):
 
 class QDP:
     """A data processing class for quantizing data.
+
+    cuts format is:
+    [
+        [0-1 threshold, 1-2 threshold, ... (n-1)-n threshold],  # shot 0
+        ...  # shot 1
+    ]
 
     The raw data format is the following:
     [ # list of experiments
@@ -116,10 +123,58 @@ class QDP:
         # set a data path to search from
         self.base_data_path = base_data_path
 
-    def get_cuts(self):
+    def apply_thresholds(self, cuts=None, exp='all', loading_shot=0):
+        """Digitize data with existing thresholds (default) or with supplied thresholds.
+
+        digitization bins are right open, i.e. the condition  for x in bin i b[i-1] <= x < b[i]
+        """
+        if cuts is None:
+            cuts = self.cuts
+        # apply cuts to one or all experiments
+        if exp == 'all':
+            exps = self.experiments
+        else:
+            exps = self.experiments[exp]
+        for e in exps:
+            for i in e['iterations']:
+                shots = len(e['iterations'][i]['signal_data'][0])
+                # digitize the data
+                measurements = len(e['iterations'][i]['signal_data'])
+                quant = np.empty((shots, measurements))
+                for s in range(shots):
+                    # first bin is bin 1
+                    quant[s] = np.digitize(e['iterations'][i]['signal_data'][:, s], cuts[s]) - 1
+                e['iterations'][i]['quantized_data'] = quant.transpose()
+                # calculate loading and retention for each shot
+                retention = np.empty((shots, ))
+                for s in range(shots):
+                    retention[s] = np.sum(np.logical_and(
+                        quant[loading_shot],
+                        quant[s]
+                    ), axis=0)
+                loading = np.mean(retention[loading_shot])
+                retention[loading_shot] = 0.0
+                loaded = np.sum(loading)
+                e['iterations'][i]['loading'] = loading
+                e['iterations'][i]['retention'] = retention/loaded
+                e['iterations'][i]['loaded'] = loaded
+
+        return self.get_retention()
+
+    def get_retention(self, shot=1):
+        retention = np.empty((
+            len(self.experiments),
+            len(self.experiments[0]['iterations'].items())
+        ))
+        for e, exp in enumerate(self.experiments):
+            for i in exp['iterations']:
+                retention[e, i] = exp['iterations'][i]['retention'][shot]
+        return retention
+
+    def get_thresholds(self):
         return self.cuts
 
-    def get_thresholds(self, max_atoms=1, hbins=0, save_cuts=True, exp=0, itr=0):
+    def generate_thresholds(self, max_atoms=1, hbins=0, save_cuts=True, exp=0, itr=0):
         """Find the optimal thresholds for quantization of the data."""
         if max_atoms > 1:
             raise NotImplementedError
@@ -149,15 +204,21 @@ class QDP:
             if hbins < 1:
                 hbins = range(int(np.max(shot_data))+1)
             hist, bin_edges = np.histogram(shot_data, bins=hbins, normed=True)
-            cuts[s] = [intersection(*guess)]
-            self.rload[s] = frac(*guess)
+            try:
+                popt, pcov = optimize.curve_fit(dblgauss, bin_edges[:-1], hist, guess)
+                cuts[s] = [intersection(*popt)]
+                self.rload[s] = frac(*popt)
+            except RuntimeError:
+                cuts[s] = np.nan  # [intersection(*guess)]
+                self.rload[s] = np.nan  # frac(*guess)
             ret_val.append({
                 'hist_x': bin_edges[:-1],
                 'hist_y': hist,
                 'max_atoms': max_atoms,
-                'fit_params': guess,
-                'fit_cov': guess,
+                'fit_params': popt,
+                'fit_cov': pcov,
                 'cuts': cuts[-1],
+                'guess': guess
             })
         self.cuts = cuts
         return ret_val
@@ -253,3 +314,6 @@ class QDP:
             timeseries_data[s] = tmp[ptr:ptr + meas_bins]
             ptr += meas_bins
         return timeseries_data
+
+    def set_thresholds(self, cuts):
+        self.cuts = cuts

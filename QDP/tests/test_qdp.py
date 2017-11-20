@@ -2,6 +2,7 @@ import pytest
 import os.path
 import h5py
 import numpy as np
+
 from QDP import qdp
 
 test_file_path = os.path.dirname(os.path.abspath(__file__))
@@ -12,7 +13,7 @@ def between(x, l, h):
     assert((x > l) and (x < h))
 
 
-def base_hdf5_file(data_func, experiments=1, iterations=10, measurements=100, shots=2, drop_bins=3, meas_bins=10):
+def base_hdf5_file(data_func, experiments=1, iterations=10, measurements=200, shots=2, drop_bins=3, meas_bins=10):
     # use a memory mapped file for testing
     f = h5py.File(os.path.join(test_file_path, filename), "w", driver='core')
     i_var = 'dummy'
@@ -86,8 +87,26 @@ def test_binary_cuts(test_hdf5_file_binary):
     # manually load in an experiment list
     q.load_exp_list(exps)
     # find cuts
-    q.get_thresholds()
+    ret_val = q.generate_thresholds()
     # retrieve cuts
-    cuts = q.get_cuts()
-    between(cuts[0][0], 7, 15)  # check that the shot 0 0-1 atom threshold is reasonable
-    between(cuts[1][0], 7, 15)  # check that the shot 1 0-1 atom threshold is reasonable
+    cuts = q.get_thresholds()
+    between(cuts[0][0], 8, 15)  # check that the shot 0 0-1 atom threshold is reasonable
+    between(cuts[1][0], 8, 15)  # check that the shot 1 0-1 atom threshold is reasonable
+
+    # check that fits are reasonable
+    # amplitudes
+    between(ret_val[0]['fit_params'][0], 0.6, 0.8)  # 70% no event
+    between(ret_val[0]['fit_params'][1], 0.2, 0.4)  # 30% event
+    between(ret_val[1]['fit_params'][0], 0.6, 0.8)  # 70% no event
+    between(ret_val[1]['fit_params'][1], 0.2, 0.4)  # 30% event
+    # means
+    between(ret_val[0]['fit_params'][2], 4, 6)  # 70% no event
+    between(ret_val[0]['fit_params'][3], 23, 27)  # 30% event
+    between(ret_val[1]['fit_params'][2], 4, 6)  # 70% no event
+    between(ret_val[1]['fit_params'][3], 23, 27)  # 30% event
+
+    # digitization
+    q.apply_thresholds()
+    retention = q.get_retention()
+    assert(retention.shape == (1, 10))
+    assert(retention[0, 0] == 1.0)
