@@ -19,3 +19,8 @@ __pycache__/
 docs/_build/
 build/
 dist/
+
+# testing
+*.json
+*.npy
+*.hdf5

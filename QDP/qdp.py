@@ -4,6 +4,9 @@ import numpy as np
 from sklearn import mixture
 from scipy import special
 from scipy import optimize
+import subprocess
+import json
+import ivar
 
 
 def intersection(A0, A1, m0, m1, s0, s1):
@@ -30,30 +33,20 @@ def dblgauss(x, A0, A1, m0, m1, s0, s1):
     return A0*np.exp(-(x-m0)**2 / (2*s0**2))/np.sqrt(2*np.pi*s0**2) + A1*np.exp(-(x-m1)**2 / (2*s1**2))/np.sqrt(2*np.pi*s1**2)
 
 
-def is_iterated(func):
-    """Evaluates independent variables to see if it is a list(-ish) type.
-
-    Need to have numpy functions defined in the namespace for CsPy, but we dont
-    actually want to pollute the namespace.
-    """
-    from numpy import *
-    try:
-        tmp = eval(func.value)
-    except NameError as e:
-        print(e)
-        return False
-    return (type(tmp) == 'list') | (type(tmp) == ndarray) | (type(tmp) == tuple)
-
-
 def get_iteration_variables(h5file, iterations):
     """Returns a list of variables that evaluate to a list"""
     i_vars = []
+    i_vars_desc = {}
     if iterations > 1:
         for i in h5file['settings/experiment/independentVariables/'].iteritems():
             # how to eval numpy functions withoout namespace
-            if is_iterated(i[1]['function']):
+            if ivar.is_iterated(i[1]['function']):
                 i_vars.append(i[0])
-    return i_vars
+                i_vars_desc[i[0]] = {
+                    'description': i[1]['description'][()],
+                    'function': i[1]['function'][()],
+                }
+    return (i_vars, i_vars_desc)
 
 
 def binomial_error(ns, n):
@@ -69,6 +62,22 @@ def binomial_error(ns, n):
             ns[i] = n - 0.5
         errs[i] = (z/float(n))*np.sqrt(ns[i]*(1.0-float(ns[i])/float(n)))
     return errs
+
+
+def jsonify(data):
+    """Prep for serialization."""
+    json_data = dict()
+    for key, value in data.iteritems():
+        if isinstance(value, list):  # for lists
+            value = [jsonify(item) if isinstance(item, dict) else item for item in value]
+        if isinstance(value, dict):  # for nested lists
+            value = jsonify(value)
+        if isinstance(key, int):  # if key is integer: > to string
+            key = str(key)
+        if type(value).__module__ == 'numpy':  # if value is numpy.*: > to python list
+            value = value.tolist()
+        json_data[key] = value
+    return json_data
 
 
 class QDP:
@@ -89,6 +98,10 @@ class QDP:
             # other variables/settings can be included in the iteration object,
             # but these must be because they are the actual changed variables
             variable_list: [`var_0`, `var_1`],
+            variable_desc: {
+                `var_0`: {'description': `description`, 'function': `function`},
+                `var_1`: {'description': `description`, 'function': `function`},
+            }
             iterations: {
                 `iter_key`: {
                     timeseries_data: [ # if camera data time series is length 1
@@ -103,6 +116,10 @@ class QDP:
                             [shot_0_quant, ... shot_n-1_quant],
                             ...
                     ],
+                    loading: `loading`,
+                    retention: `retention`,
+                    retention_err: `retention_err`,
+                    loaded: `loaded`,
                     variables: {
                         `var_0`: var_0_iter_val,
                         `var_1`: var_1_iter_val,
@@ -121,6 +138,10 @@ class QDP:
                             [shot_0_quant, ... shot_n-1_quant],
                             ...
                     ],
+                    loading: `loading`,
+                    retention: `retention`,
+                    retention_err: `retention_err`,
+                    loaded: `loaded`,
                     variables: {
                         `var_0`: var_0_iter_val,
                         `var_1`: var_1_iter_val,
@@ -137,6 +158,8 @@ class QDP:
         self.rload = []
         # set a data path to search from
         self.base_data_path = base_data_path
+        # save current git hash
+        self.version = subprocess.check_output(['git', 'describe', '--always']).strip()
 
     def apply_thresholds(self, cuts=None, exp='all', loading_shot=0):
         """Digitize data with existing thresholds (default) or with supplied thresholds.
@@ -177,20 +200,31 @@ class QDP:
 
         return self.get_retention()
 
-    def get_retention(self, shot=1):
+    def get_retention(self, shot=1, fmt='dict'):
         retention = np.empty((
             len(self.experiments),
             len(self.experiments[0]['iterations'].items())
         ))
         err = np.empty_like(retention)
+        ivar = np.empty_like(retention)
         for e, exp in enumerate(self.experiments):
+            if len(exp['variable_list']) > 1:
+                raise NotImplementedError
+            ivar_name = exp['variable_list'][0]
             for i in exp['iterations']:
                 retention[e, i] = exp['iterations'][i]['retention'][shot]
                 err[e, i] = exp['iterations'][i]['retention_err'][shot]
-        return {
-            'retention': retention,
-            'error': err,
-        }
+                ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
+        # if numpy format is requested return it
+        if fmt == 'numpy' or fmt == 'np':
+            return np.array([ivar, retention, err])
+        else:
+            # if unrecognized return dict format
+            return {
+                'retention': retention,
+                'error': err,
+                'ivar': ivar,
+            }
 
     def get_thresholds(self):
         return self.cuts
@@ -280,16 +314,21 @@ class QDP:
             # iterations are the same for all experiments in the same file
             # iteration variables are the same for all experiments in a data file
             iterations = len(e[1]['iterations/'].items())
+            ivars, ivar_desc = get_iteration_variables(h5file, iterations)
             exp_data = {
                 'experiment_name': os.path.basename(full_filepath),
                 'source_file': full_filepath,
-                'variable_list': get_iteration_variables(h5file, iterations),
+                'source_filename': os.path.basename(full_filepath),
+                'source_path': os.path.dirname(full_filepath),
+                'variable_list': ivars,
+                'variable_desc': ivar_desc,
                 'iterations': {}
             }
             # step through iterations
             for i in e[1]['iterations/'].iteritems():
                 exp_data['iterations'][int(i[0])] = self.process_iteration(i[1])
             exps.append(exp_data)
+        h5file.close()
         return exps
 
     def process_iteration(self, h5_iter):
@@ -300,7 +339,7 @@ class QDP:
         }
         # copy variable values over
         for v in h5_iter['variables'].iteritems():
-            iteration_obj['variables'][v[0]] = v[1]
+            iteration_obj['variables'][v[0]] = v[1][()]
         # copy measurement values over
         for m in h5_iter['measurements/'].iteritems():
             timeseries_data = self.process_measurement(m[1], iteration_obj['variables'])
@@ -324,8 +363,8 @@ class QDP:
 
         returns numpy array of timeseries_data for each shot.
         """
-        drop_bins = variables['throwaway_bins'].value
-        meas_bins = variables['measurement_bins'].value
+        drop_bins = variables['throwaway_bins']
+        meas_bins = variables['measurement_bins']
         tmp = np.array(measurement['data/counter/data'].value)
         ptr = 0
         shots = len(tmp)/(drop_bins + meas_bins)
@@ -335,6 +374,33 @@ class QDP:
             timeseries_data[s] = tmp[ptr:ptr + meas_bins]
             ptr += meas_bins
         return timeseries_data
+
+    def save_experiment_data(self, filename_prefix='data', path=None):
+        """Saves data to files with the specified prefix."""
+        if path is None:
+            path = self.experiments[0]['source_path']
+        self.save_json_data(filename_prefix=filename_prefix, path=path)
+        self.save_retention_data(filename_prefix=filename_prefix, path=path)
+
+    def save_json_data(self, filename_prefix='data', path=None):
+        if path is None:
+            path = self.experiments[0]['source_path']
+        with open(os.path.join(path, filename_prefix + '.json'), 'w') as f:
+            json.dump({
+                    'data': map(jsonify, self.experiments),
+                    'metadata': {'version': self.version},
+                },
+                f
+            )
+
+    def save_retention_data(self, filename_prefix='data', path=None, shot=1):
+        if path is None:
+            path = self.experiments[0]['source_path']
+        np.save(
+            os.path.join(path, filename_prefix + '.npy'),
+            self.get_retention(shot=shot, fmt='numpy'),
+            allow_pickle=False
+        )
 
     def set_thresholds(self, cuts):
         self.cuts = cuts

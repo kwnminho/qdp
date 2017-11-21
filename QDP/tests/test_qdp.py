@@ -69,9 +69,14 @@ def test_hdf5_file_binary():
 def test_basic(test_hdf5_file):
     # test that theraw time series data is cut up correctly
     q = qdp.QDP(test_file_path)
-    exps = q.load_hdf5_file('', h5file=test_hdf5_file)
+    exps = q.load_hdf5_file(os.path.join(test_file_path, filename), h5file=test_hdf5_file)
+    # check that the independent variable was correctly identified
+    assert(exps[0]['variable_list'][0] == 'dummy')
+    assert(len(exps[0]['variable_list']) == 1)
+    # check that the data was copied correctly
     for e in exps:
         for i in e['iterations']:
+            assert(e['iterations'][i]['variables']['dummy'][()] == int(i))
             for m in e['iterations'][i]['timeseries_data']:
                 for t in m:
                     all(item == 1 for item in t)
@@ -83,7 +88,7 @@ def test_basic(test_hdf5_file):
 def test_binary_cuts(test_hdf5_file_binary):
     # test that the automatic cuts function is ok
     q = qdp.QDP(test_file_path)
-    exps = q.load_hdf5_file('', h5file=test_hdf5_file_binary)
+    exps = q.load_hdf5_file(os.path.join(test_file_path, filename), h5file=test_hdf5_file_binary)
     # manually load in an experiment list
     q.load_exp_list(exps)
     # find cuts
@@ -110,6 +115,10 @@ def test_binary_cuts(test_hdf5_file_binary):
     ret_val = q.get_retention()
     retention = ret_val['retention']
     err = ret_val['error']
+    ivar = ret_val['ivar']
     assert(retention.shape == (1, 10))
-    assert(retention[0, 0] == 1.0)
+    assert(retention[0, 0] > 0.96)
     all(e > 0 for e in err[0])
+
+    # try saving data
+    q.save_experiment_data()
