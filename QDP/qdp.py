@@ -181,7 +181,7 @@ class QDP:
                 quant = np.empty((shots, measurements))
                 for s in range(shots):
                     # first bin is bin 1
-                    quant[s] = np.digitize(e['iterations'][i]['signal_data'][:, s], cuts[s]) - 1
+                    quant[s] = np.digitize(e['iterations'][i]['signal_data'][:, s], cuts[s])
                 e['iterations'][i]['quantized_data'] = quant.transpose()
                 # calculate loading and retention for each shot
                 retention = np.empty((shots, ))
@@ -210,11 +210,17 @@ class QDP:
         for e, exp in enumerate(self.experiments):
             if len(exp['variable_list']) > 1:
                 raise NotImplementedError
-            ivar_name = exp['variable_list'][0]
+            if len(exp['variable_list']) == 1:
+                ivar_name = exp['variable_list'][0]
+            else:
+                ivar_name = None
             for i in exp['iterations']:
                 retention[e, i] = exp['iterations'][i]['retention'][shot]
                 err[e, i] = exp['iterations'][i]['retention_err'][shot]
-                ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
+                if ivar_name is not None:
+                    ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
+                else:
+                    ivar[e, i] = 0
         # if numpy format is requested return it
         if fmt == 'numpy' or fmt == 'np':
             return np.array([ivar, retention, err])
@@ -365,9 +371,9 @@ class QDP:
         """
         drop_bins = variables['throwaway_bins']
         meas_bins = variables['measurement_bins']
-        tmp = np.array(measurement['data/counter/data'].value)
+        tmp = measurement['data/counter/data'].value.flatten()
         ptr = 0
-        shots = len(tmp)/(drop_bins + meas_bins)
+        shots = tmp.shape[0]/(drop_bins + meas_bins)
         timeseries_data = np.zeros((shots, meas_bins))
         for s in range(shots):
             ptr += drop_bins
@@ -396,11 +402,14 @@ class QDP:
     def save_retention_data(self, filename_prefix='data', path=None, shot=1):
         if path is None:
             path = self.experiments[0]['source_path']
-        np.save(
-            os.path.join(path, filename_prefix + '.npy'),
-            self.get_retention(shot=shot, fmt='numpy'),
-            allow_pickle=False
-        )
+        try:
+            np.save(
+                os.path.join(path, filename_prefix + '.npy'),
+                self.get_retention(shot=shot, fmt='numpy'),
+                allow_pickle=False
+            )
+        except KeyError:
+            print('Retention data has not been processed.  Not saving.')
 
     def set_thresholds(self, cuts):
         self.cuts = cuts
