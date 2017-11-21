@@ -107,6 +107,9 @@ def test_binary_cuts(test_hdf5_file_binary):
 
     # digitization
     q.apply_thresholds()
-    retention = q.get_retention()
+    ret_val = q.get_retention()
+    retention = ret_val['retention']
+    err = ret_val['error']
     assert(retention.shape == (1, 10))
     assert(retention[0, 0] == 1.0)
+    all(e > 0 for e in err[0])

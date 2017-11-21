@@ -56,6 +56,21 @@ def get_iteration_variables(h5file, iterations):
     return i_vars
 
 
+def binomial_error(ns, n):
+    """Normal approximation interval, see: https://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval"""
+    alpha = 1-0.682
+    z = 1-0.5*alpha
+    errs = np.zeros_like(ns)
+    for i in xrange(len(ns)):
+        # if ns is 0 or n, then use ns = 0.5 or n - 0.5 for the error calculation so we dont get error = 0
+        if int(ns[i]) == 0:
+            ns[i] = 0.5
+        if int(ns[i]) == int(n):
+            ns[i] = n - 0.5
+        errs[i] = (z/float(n))*np.sqrt(ns[i]*(1.0-float(ns[i])/float(n)))
+    return errs
+
+
 class QDP:
     """A data processing class for quantizing data.
 
@@ -157,6 +172,7 @@ class QDP:
                 loaded = np.sum(loading)
                 e['iterations'][i]['loading'] = loading
                 e['iterations'][i]['retention'] = retention/loaded
+                e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
                 e['iterations'][i]['loaded'] = loaded
 
         return self.get_retention()
@@ -166,10 +182,15 @@ class QDP:
             len(self.experiments),
             len(self.experiments[0]['iterations'].items())
         ))
+        err = np.empty_like(retention)
         for e, exp in enumerate(self.experiments):
             for i in exp['iterations']:
                 retention[e, i] = exp['iterations'][i]['retention'][shot]
-        return retention
+                err[e, i] = exp['iterations'][i]['retention_err'][shot]
+        return {
+            'retention': retention,
+            'error': err,
+        }
 
     def get_thresholds(self):
         return self.cuts
