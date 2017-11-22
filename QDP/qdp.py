@@ -60,7 +60,11 @@ def binomial_error(ns, n):
             ns[i] = 0.5
         if int(ns[i]) == int(n):
             ns[i] = n - 0.5
-        errs[i] = (z/float(n))*np.sqrt(ns[i]*(1.0-float(ns[i])/float(n)))
+        if n == 0:
+            print "no loading observed"
+            errs[i] = np.nan
+        else:
+            errs[i] = (z/float(n))*np.sqrt(ns[i]*(1.0-float(ns[i])/float(n)))
     return errs
 
 
@@ -193,7 +197,7 @@ class QDP:
                 loading = np.mean(retention[loading_shot])
                 retention[loading_shot] = 0.0
                 loaded = np.sum(loading)
-                e['iterations'][i]['loading'] = loading
+                e['iterations'][i]['loading'] = loaded/measurements
                 e['iterations'][i]['retention'] = retention/loaded
                 e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
                 e['iterations'][i]['loaded'] = loaded
@@ -207,6 +211,7 @@ class QDP:
         ))
         err = np.empty_like(retention)
         ivar = np.empty_like(retention)
+        loading = np.empty_like(retention)
         for e, exp in enumerate(self.experiments):
             if len(exp['variable_list']) > 1:
                 raise NotImplementedError
@@ -216,6 +221,7 @@ class QDP:
                 ivar_name = None
             for i in exp['iterations']:
                 retention[e, i] = exp['iterations'][i]['retention'][shot]
+                loading[e, i] = exp['iterations'][i]['loading'][()]
                 err[e, i] = exp['iterations'][i]['retention_err'][shot]
                 if ivar_name is not None:
                     ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
@@ -223,11 +229,12 @@ class QDP:
                     ivar[e, i] = 0
         # if numpy format is requested return it
         if fmt == 'numpy' or fmt == 'np':
-            return np.array([ivar, retention, err])
+            return np.array([ivar, retention, err, loading])
         else:
             # if unrecognized return dict format
             return {
                 'retention': retention,
+                'loading': loading,
                 'error': err,
                 'ivar': ivar,
             }
