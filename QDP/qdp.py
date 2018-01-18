@@ -7,30 +7,49 @@ from scipy import optimize
 import subprocess
 import json
 import ivar
+import datetime
 
 
-def intersection(A0, A1, m0, m1, s0, s1):
-    return (m1*s0**2-m0*s1**2-np.sqrt(s0**2*s1**2*(m0**2-2*m0*m1+m1**2+2*np.log(A0/A1)*(s1**2-s0**2))))/(s0**2-s1**2)
+def default_exp(dp):
+    """Function that generates the path to the default data folder, relative to dp"""
+    exp_date = datetime.datetime.now().strftime("%Y_%m_%d")
+    search_path = os.path.join(dp, exp_date)
+    try:
+        exp_name = os.listdir(search_path)[-1]
+    except:
+        # might be last experiment from yesterday
+        print "no data for {}, search yesterday's data".format(exp_date)
+        exp_date = (datetime.datetime.now() - datetime.timedelta(1)).strftime("%Y_%m_%d")
+        search_path = os.path.join(dp, exp_date)
+        try:
+            exp_name = os.listdir(search_path)[-1]
+        except Exception as e:
+            print "I tried my best but there is no data in today or yesterday's directories"
+    return os.path.join(exp_date, exp_name, 'results.hdf5')
 
 
-def area(A0, A1, m0, m1, s0, s1):
-    return np.sqrt(np.pi/2)*(A0*s0+A0*s0*special.erf(m0/np.sqrt(2)/s0)+A1*s1+A1*s1*special.erf(m1/np.sqrt(2)/s1))
+def intersection(A1, m0, m1, s0, s1):
+    return (m1*s0**2-m0*s1**2-np.sqrt(s0**2*s1**2*(m0**2-2*m0*m1+m1**2+2*np.log((1-A1)/A1)*(s1**2-s0**2))))/(s0**2-s1**2)
+
+
+def area(A1, m0, m1, s0, s1):
+    return np.sqrt(np.pi/2)*((1-A1)*s0+(1-A1)*s0*special.erf(m0/np.sqrt(2)/s0)+A1*s1+A1*s1*special.erf(m1/np.sqrt(2)/s1))
 
 
 # Normed Overlap for arbitrary cut point
-def overlap(xc, A0, A1, m0, m1, s0, s1):
-    err0 = A0*np.sqrt(np.pi/2)*s0*(1-special.erf((xc-m0)/np.sqrt(2)/s0))
+def overlap(xc, A1, m0, m1, s0, s1):
+    err0 = (1-A1)*np.sqrt(np.pi/2)*s0*(1-special.erf((xc-m0)/np.sqrt(2)/s0))
     err1 = A1*np.sqrt(np.pi/2)*s1*(special.erf((xc-m1)/np.sqrt(2)/s1)+special.erf(m1/np.sqrt(2)/s1))
     return (err0+err1)/area(A0, A1, m0, m1, s0, s1)
 
 
 # Relative Fraction in 1
-def frac(A0, A1, m0, m1, s0, s1):
-    return 1/(1+A0*s0*(1+special.erf(m0/np.sqrt(2)/s0))/A1/s1/(1+special.erf(m1/np.sqrt(2)/s1)))
+def frac(A1, m0, m1, s0, s1):
+    return A1
 
 
-def dblgauss(x, A0, A1, m0, m1, s0, s1):
-    return A0*np.exp(-(x-m0)**2 / (2*s0**2))/np.sqrt(2*np.pi*s0**2) + A1*np.exp(-(x-m1)**2 / (2*s1**2))/np.sqrt(2*np.pi*s1**2)
+def dblgauss(x, A1, m0, m1, s0, s1):
+    return (1-A1)*np.exp(-(x-m0)**2 / (2*s0**2))/np.sqrt(2*np.pi*s0**2) + A1*np.exp(-(x-m1)**2 / (2*s1**2))/np.sqrt(2*np.pi*s1**2)
 
 
 def get_iteration_variables(h5file, iterations):
@@ -158,8 +177,8 @@ class QDP:
     """
     def __init__(self, base_data_path=""):
         self.experiments = []
-        self.cuts = []
-        self.rload = []
+        self.cuts = {}
+        self.rload = {}
         # set a data path to search from
         self.base_data_path = base_data_path
         # save current git hash
@@ -179,30 +198,83 @@ class QDP:
             exps = self.experiments[exp]
         for e in exps:
             for i in e['iterations']:
-                shots = len(e['iterations'][i]['signal_data'][0])
+                meas, shots, rois = e['iterations'][i]['signal_data'].shape[:3]
                 # digitize the data
-                measurements = len(e['iterations'][i]['signal_data'])
-                quant = np.empty((shots, measurements))
-                for s in range(shots):
-                    # first bin is bin 1
-                    quant[s] = np.digitize(e['iterations'][i]['signal_data'][:, s], cuts[s])
-                e['iterations'][i]['quantized_data'] = quant.transpose()
+                quant = np.empty((shots, rois, meas))
+                for r in range(rois):
+                    for s in range(shots):
+                        # first bin is bin 1
+                        quant[s, r] = np.digitize(e['iterations'][i]['signal_data'][:, s, r], cuts[r][s])
+                e['iterations'][i]['quantized_data'] = quant.swapaxes(0, 2)  # to: (meas, shots, rois)
                 # calculate loading and retention for each shot
-                retention = np.empty((shots, ))
-                for s in range(shots):
-                    retention[s] = np.sum(np.logical_and(
-                        quant[loading_shot],
-                        quant[s]
-                    ), axis=0)
-                loading = np.mean(retention[loading_shot])
-                retention[loading_shot] = 0.0
+                retention = np.empty((shots, rois))
+                reloading = np.empty((shots, rois))
+                for r in range(rois):
+                    for s in range(shots):
+                        retention[s, r] = np.sum(np.logical_and(
+                            quant[loading_shot, r],
+                            quant[s, r]
+                        ), axis=0)
+                        reloading[s, r] = np.sum(np.logical_and(
+                            np.logical_not(quant[loading_shot, r]),
+                            quant[s, r]
+                        ), axis=0)
+                loading = np.mean(retention[loading_shot, :])
+                retention[loading_shot, :] = 0.0
+                reloading[loading_shot, :] = 0.0
                 loaded = np.sum(loading)
-                e['iterations'][i]['loading'] = loaded/measurements
+                e['iterations'][i]['loading'] = loaded/meas
                 e['iterations'][i]['retention'] = retention/loaded
                 e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
                 e['iterations'][i]['loaded'] = loaded
+                e['iterations'][i]['reloading'] = reloading.astype('float')/(meas-loaded)
 
         return self.get_retention()
+
+    def format_counter_data(self, array, shots, drops, bins):
+        """Formats raw 2D counter data into the required 4D format.
+
+        Formats raw 2D counter data with implicit stucture:
+            [   # counter 0
+                [ dropped_bins shot_time_series dropped_bins shot_time_series ... ],
+                # counter 1
+                [ dropped_bins shot_time_series dropped_bins shot_time_series ... ]
+            ]
+        into the 4D format expected by the subsequent analyses"
+        [   # measurements, can have different lengths run-to-run
+            [   # shots array, fixed size
+                [   # roi list, shot 0
+                    [ time_series_roi_0 ],
+                    [ time_series_roi_1 ],
+                    ...
+                ],
+                [   # roi list, shot 1
+                    [ time_series_roi_0 ],
+                    [ time_series_roi_1 ],
+                    ...
+                ],
+                ...
+            ],
+            ...
+        ]
+        """
+        rois, bins = array.shape[:2]
+        bins_per_shot = drops + bins  # bins is data bins per shot
+        # calculate the number of shots dynamically
+        num_shots = int(bins/(bins_per_shot))
+        # calculate the number of measurements contained in the raw data
+        # there may be extra shots if we get branching implemented
+        num_meas = num_shots//shots
+        # build a mask for removing valid data
+        shot_mask = ([False]*drops + [True]*bins)
+        good_shots = self.shots*num_meas
+        # mask for the roi
+        ctr_mask = np.array(shot_mask*good_shots + 0*shot_mask*(num_shots-good_shots), dtype='bool')
+        # apply mask a reshape partially
+        array = array[:, ctr_mask].reshape((rois, num_meas, shots, bins))
+        array = array.swapaxes(0, 1)  # swap rois and measurement axes
+        array = array.swapaxes(1, 2)  # swap rois and shots axes
+        return array
 
     def get_retention(self, shot=1, fmt='dict'):
         retention = np.empty((
@@ -245,64 +317,75 @@ class QDP:
     def get_thresholds(self):
         return self.cuts
 
-    def generate_thresholds(self, max_atoms=1, hbins=0, save_cuts=True, exp=0, itr=0):
-        """Find the optimal thresholds for quantization of the data."""
-        if max_atoms > 1:
-            raise NotImplementedError
-        shots = len(self.experiments[exp]['iterations'][itr]['signal_data'][0])
+    def fit_distribution(self, shot_data, max_atoms=1, hbins=0):
+        cut = np.nan
         # use a gaussian mixture model to find initial guess at signal distributions
         gmix = mixture.GaussianMixture(n_components=max_atoms+1)
-        ret_val = []
-        cuts = []
-        self.rload = np.zeros(shots)
-        for s in range(shots):
-            cuts.append([np.nan]*max_atoms)
-            shot_data = self.experiments[exp]['iterations'][itr]['signal_data'][:, s]
-            gmix.fit(np.array([shot_data]).transpose())
-            # order the components by the size of the signal
-            indicies = np.argsort(gmix.means_.flatten())
-            guess = []
-            for n in range(max_atoms+1):
-                idx = indicies[n]
-                guess.append([
-                    gmix.weights_[idx],  # amplitudes
-                    gmix.means_.flatten()[idx],  # x0s
-                    np.sqrt(gmix.means_.flatten()[idx])  # sigmas
-                ])
-            # reorder the parameters
-            guess = np.transpose(guess).flatten()
-            # bin the data, default binning is just range([0,max])
-            if hbins < 1:
-                hbins = range(int(np.max(shot_data))+1)
-            hist, bin_edges = np.histogram(shot_data, bins=hbins, normed=True)
-            try:
-                popt, pcov = optimize.curve_fit(dblgauss, bin_edges[:-1], hist, guess)
-                cuts[s] = [intersection(*popt)]
-                self.rload[s] = frac(*popt)
-            except RuntimeError:
-                cuts[s] = np.nan  # [intersection(*guess)]
-                self.rload[s] = np.nan  # frac(*guess)
-            ret_val.append({
-                'hist_x': bin_edges[:-1],
-                'hist_y': hist,
-                'max_atoms': max_atoms,
-                'fit_params': popt,
-                'fit_cov': pcov,
-                'cuts': cuts[-1],
-                'guess': guess
-            })
-        self.cuts = cuts
+        gmix.fit(np.array([shot_data]).transpose())
+        # order the components by the size of the signal
+        indicies = np.argsort(gmix.means_.flatten())
+        guess = []
+        for n in range(max_atoms+1):
+            idx = indicies[n]
+            guess.append([
+                gmix.weights_[idx],  # amplitudes
+                gmix.means_.flatten()[idx],  # x0s
+                np.sqrt(gmix.means_.flatten()[idx])  # sigmas
+            ])
+        # reorder the parameters, drop the 0 atom amplitude
+        guess = np.transpose(guess).flatten()[1:]
+        # bin the data, default binning is just range([0,max])
+        if hbins < 1:
+            hbins = range(int(np.max(shot_data))+1)
+        hist, bin_edges = np.histogram(shot_data, bins=hbins, normed=True)
+        try:
+            popt, pcov = optimize.curve_fit(dblgauss, bin_edges[:-1], hist, guess)
+            cut = [intersection(*popt)]
+            rload = frac(*popt)
+        except RuntimeError:
+            cut = np.nan  # [intersection(*guess)]
+            rload = np.nan  # frac(*guess)
+        return {
+            'hist_x': bin_edges[:-1],
+            'hist_y': hist,
+            'max_atoms': max_atoms,
+            'fit_params': popt,
+            'fit_cov': pcov,
+            'cuts': [cut],
+            'guess': guess,
+            'rload': rload,
+        }
+
+    def generate_thresholds(self, save_cuts=True, exp=0, itr=0, **kwargs):
+        """Find the optimal thresholds for quantization of the data."""
+        if kwargs['max_atoms'] > 1:
+            raise NotImplementedError
+        meas, shots, rois = self.experiments[exp]['iterations'][itr]['signal_data'].shape[:3]
+        ret_val = {}
+        for r in range(rois):
+            self.rload[r] = np.zeros(shots)
+            ret_val[r] = []
+            cuts = []
+            for s in range(shots):
+                # stored format is (sub_measurement, shot, roi, 1)
+                shot_data = self.experiments[exp]['iterations'][itr]['signal_data'][:, s, r, 0]
+                ret_val[r].append(self.fit_distribution(shot_data, **kwargs))
+                cuts.append(ret_val[r]['cuts'])
+                self.rload[r][s] = ret_val[r]['rload']
+            self.set_thresholds(cuts, roi=r)
         return ret_val
 
     def get_settings_from_file(self, h5_settings):
         """Extract any necessary parameters from the file."""
         pass
 
-    def load_data_file(self, filepath):
+    def load_data_file(self, filepath=''):
         """Load a data file into the class.
 
         Additional experiments will be appended to an existing list.
         """
+        if not filepath:
+            filepath = default_exp(self.base_data_path)
         full_path = os.path.join(self.base_data_path, filepath)
         new_experiments = self.load_hdf5_file(full_path)
         self.experiments += new_experiments
@@ -358,13 +441,12 @@ class QDP:
             iteration_obj['variables'][v[0]] = v[1][()]
         # copy measurement values over
         for m in h5_iter['measurements/'].iteritems():
-            timeseries_data = self.process_measurement(m[1], iteration_obj['variables'])
-            iteration_obj['timeseries_data'].append(timeseries_data)
-            signal_data = np.sum(timeseries_data, axis=1)
-            iteration_obj['signal_data'].append(signal_data)
-        # cast as numpy arrays
-        iteration_obj['signal_data'] = np.array(iteration_obj['signal_data'])
-        iteration_obj['timeseries_data'] = np.array(iteration_obj['timeseries_data'])
+            data = self.process_measurement(m[1], iteration_obj['variables'])
+            iteration_obj['timeseries_data'].append(data['timeseries_data'])
+            iteration_obj['signal_data'].append(data['signal_data'])
+        # cast as numpy arrays, compress sub measurements
+        iteration_obj['signal_data'] = np.concatenate(iteration_obj['signal_data'])
+        iteration_obj['timeseries_data'] = np.concatenate(iteration_obj['timeseries_data'])
         return iteration_obj
 
     def process_measurement(self, measurement, variables):
@@ -372,7 +454,9 @@ class QDP:
 
         returns numpy array of timeseries_data for each shot.
         """
-        return self.process_raw_counter_data(measurement, variables)
+        sum_data = self.process_analyzed_counter_data(measurement, variables)
+        ts_data = self.process_raw_counter_data(measurement, variables)
+        return {'timeseries_data': ts_data, 'signal_data': sum_data}
 
     def process_raw_counter_data(self, measurement, variables):
         """Retrieve data from hdf5 measurement obj.
@@ -381,15 +465,20 @@ class QDP:
         """
         drop_bins = variables['throwaway_bins']
         meas_bins = variables['measurement_bins']
-        tmp = measurement['data/counter/data'].value.flatten()
-        ptr = 0
-        shots = tmp.shape[0]/(drop_bins + meas_bins)
-        timeseries_data = np.zeros((shots, meas_bins))
-        for s in range(shots):
-            ptr += drop_bins
-            timeseries_data[s] = tmp[ptr:ptr + meas_bins]
-            ptr += meas_bins
-        return timeseries_data
+        array = measurement['data/counter/data'].value
+        total_shots = array.shape[1]/(drop_bins + meas_bins)
+        if total_shots > 2:
+            print("Possibly too many shots, analysis might need to be updated")
+        return self.format_counter_data(array, total_shots, drop_bins, meas_bins)
+
+    def process_analyzed_counter_data(self, measurement, variables):
+        """Retrieve data from hdf5 measurement obj.
+
+        returns numpy array of timeseries_data for each shot.
+        """
+        # stored format is (sub_measurement, shot, roi, 1)
+        # last dimension is the "roi column", an artifact of the camera roi definition
+        return measurement['analysis/counter_data'].value
 
     def save_experiment_data(self, filename_prefix='data', path=None):
         """Saves data to files with the specified prefix."""
@@ -421,5 +510,5 @@ class QDP:
         except KeyError:
             print('Retention data has not been processed.  Not saving.')
 
-    def set_thresholds(self, cuts):
-        self.cuts = cuts
+    def set_thresholds(self, cuts, roi=0):
+        self.cuts[roi] = cuts
