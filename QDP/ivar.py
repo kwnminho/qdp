@@ -12,6 +12,6 @@ def is_iterated(func):
     except NameError as e:
         print(e)
         return False
-    if (type(tmp) == 'list') | (type(tmp) == ndarray) | (type(tmp) == tuple):
+    if (type(tmp) == list) | (type(tmp) == ndarray) | (type(tmp) == tuple):
         return len(tmp) > 1
     return False

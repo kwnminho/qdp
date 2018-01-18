@@ -220,13 +220,16 @@ class QDP:
             else:
                 ivar_name = None
             for i in exp['iterations']:
-                retention[e, i] = exp['iterations'][i]['retention'][shot]
-                loading[e, i] = exp['iterations'][i]['loading'][()]
-                err[e, i] = exp['iterations'][i]['retention_err'][shot]
-                if ivar_name is not None:
-                    ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
-                else:
-                    ivar[e, i] = 0
+                try:
+                    retention[e, i] = exp['iterations'][i]['retention'][shot]
+                    loading[e, i] = exp['iterations'][i]['loading'][()]
+                    err[e, i] = exp['iterations'][i]['retention_err'][shot]
+                    if ivar_name is not None:
+                        ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
+                    else:
+                        ivar[e, i] = 0
+                except IndexError:
+                    print "error reading (e,i): ({},{})".format(e, i)
         # if numpy format is requested return it
         if fmt == 'numpy' or fmt == 'np':
             return np.array([ivar, retention, err, loading])
