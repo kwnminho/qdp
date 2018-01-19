@@ -73,17 +73,13 @@ def binomial_error(ns, n):
     alpha = 1-0.682
     z = 1-0.5*alpha
     errs = np.zeros_like(ns)
-    for i in xrange(len(ns)):
-        # if ns is 0 or n, then use ns = 0.5 or n - 0.5 for the error calculation so we dont get error = 0
-        if int(ns[i]) == 0:
-            ns[i] = 0.5
-        if int(ns[i]) == int(n):
-            ns[i] = n - 0.5
-        if n == 0:
-            print "no loading observed"
-            errs[i] = np.nan
-        else:
-            errs[i] = (z/float(n))*np.sqrt(ns[i]*(1.0-float(ns[i])/float(n)))
+    # if ns is 0 or n, then use ns = 0.5 or n - 0.5 for the error calculation so we dont get error = 0
+    ns[ns==0] = 0.5
+    ns[ns==int(n)] = n-0.5
+    if n == 0:
+        print "no loading observed"
+        errs = np.full_like(ns, np.nan)
+    errs = (z/float(n))*np.sqrt(ns.astype('float')*(1.0-ns.astype('float')/float(n)))
     return errs
 
 
@@ -204,8 +200,8 @@ class QDP:
                 for r in range(rois):
                     for s in range(shots):
                         # first bin is bin 1
-                        quant[s, r] = np.digitize(e['iterations'][i]['signal_data'][:, s, r], cuts[r][s])
-                e['iterations'][i]['quantized_data'] = quant.swapaxes(0, 2)  # to: (meas, shots, rois)
+                        quant[s, r] = np.digitize(e['iterations'][i]['signal_data'][:, s, r, 0], cuts[r][s])
+                e['iterations'][i]['quantized_data'] = quant.swapaxes(0, 2).swapaxes(1,2)  # to: (meas, shots, rois)
                 # calculate loading and retention for each shot
                 retention = np.empty((shots, rois))
                 reloading = np.empty((shots, rois))
@@ -267,7 +263,7 @@ class QDP:
         num_meas = num_shots//shots
         # build a mask for removing valid data
         shot_mask = ([False]*drops + [True]*bins)
-        good_shots = self.shots*num_meas
+        good_shots = shots*num_meas
         # mask for the roi
         ctr_mask = np.array(shot_mask*good_shots + 0*shot_mask*(num_shots-good_shots), dtype='bool')
         # apply mask a reshape partially
@@ -279,7 +275,8 @@ class QDP:
     def get_retention(self, shot=1, fmt='dict'):
         retention = np.empty((
             len(self.experiments),
-            len(self.experiments[0]['iterations'].items())
+            len(self.experiments[0]['iterations'].items()),
+            self.experiments[0]['iterations'][0]['signal_data'].shape[2]
         ))
         err = np.empty_like(retention)
         ivar = np.empty_like(retention)
@@ -343,7 +340,7 @@ class QDP:
             cut = [intersection(*popt)]
             rload = frac(*popt)
         except RuntimeError:
-            cut = np.nan  # [intersection(*guess)]
+            cut = [np.nan]  # [intersection(*guess)]
             rload = np.nan  # frac(*guess)
         return {
             'hist_x': bin_edges[:-1],
@@ -351,14 +348,17 @@ class QDP:
             'max_atoms': max_atoms,
             'fit_params': popt,
             'fit_cov': pcov,
-            'cuts': [cut],
+            'cuts': cut,
             'guess': guess,
             'rload': rload,
         }
 
     def generate_thresholds(self, save_cuts=True, exp=0, itr=0, **kwargs):
         """Find the optimal thresholds for quantization of the data."""
-        if kwargs['max_atoms'] > 1:
+        # can drop this check when support is added
+        if 'max_atoms' not in kwargs:
+            kwargs['max_atoms'] = 1
+        elif kwargs['max_atoms'] > 1:
             raise NotImplementedError
         meas, shots, rois = self.experiments[exp]['iterations'][itr]['signal_data'].shape[:3]
         ret_val = {}
@@ -370,8 +370,8 @@ class QDP:
                 # stored format is (sub_measurement, shot, roi, 1)
                 shot_data = self.experiments[exp]['iterations'][itr]['signal_data'][:, s, r, 0]
                 ret_val[r].append(self.fit_distribution(shot_data, **kwargs))
-                cuts.append(ret_val[r]['cuts'])
-                self.rload[r][s] = ret_val[r]['rload']
+                cuts.append(ret_val[r][-1]['cuts'])
+                self.rload[r][s] = ret_val[r][-1]['rload']
             self.set_thresholds(cuts, roi=r)
         return ret_val
 
