@@ -75,11 +75,14 @@ def binomial_error(ns, n):
     errs = np.zeros_like(ns)
     # if ns is 0 or n, then use ns = 0.5 or n - 0.5 for the error calculation so we dont get error = 0
     ns[ns==0] = 0.5
-    ns[ns==int(n)] = n-0.5
-    if n == 0:
-        print "no loading observed"
-        errs = np.full_like(ns, np.nan)
-    errs = (z/float(n))*np.sqrt(ns.astype('float')*(1.0-ns.astype('float')/float(n)))
+    for r in range(len(n)):
+        if np.any(ns[r]==n[r].astype('int')):
+            ns[ns[r]==n[r].astype('int')] = n[r]-0.5
+        if np.any(n[r] == 0):
+            print "no loading observed"
+            errs[r] = np.full_like(ns[r], np.nan)
+        else:
+            errs[r] = (z/n[r].astype('float'))*np.sqrt(ns[r].astype('float')*(1.0-ns[r].astype('float')/n[r].astype('float')))
     return errs
 
 
@@ -215,10 +218,9 @@ class QDP:
                             np.logical_not(quant[loading_shot, r]),
                             quant[s, r]
                         ), axis=0)
-                loading = np.mean(retention[loading_shot, :])
+                loaded = np.copy(retention[loading_shot, :])
                 retention[loading_shot, :] = 0.0
                 reloading[loading_shot, :] = 0.0
-                loaded = np.sum(loading)
                 e['iterations'][i]['loading'] = loaded/meas
                 e['iterations'][i]['retention'] = retention/loaded
                 e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
@@ -336,12 +338,20 @@ class QDP:
             hbins = range(int(np.max(shot_data))+1)
         hist, bin_edges = np.histogram(shot_data, bins=hbins, normed=True)
         try:
-            popt, pcov = optimize.curve_fit(dblgauss, bin_edges[:-1], hist, guess)
+            popt, pcov = optimize.curve_fit(dblgauss, bin_edges[:-1], hist, p0=guess)
             cut = [intersection(*popt)]
             rload = frac(*popt)
         except RuntimeError:
+            popt = np.array([])
+            pcov = np.array([])
             cut = [np.nan]  # [intersection(*guess)]
             rload = np.nan  # frac(*guess)
+        except TypeError:
+            print("There may not be enough data for a fit. ( {} x {} )".format(len(bin_edges)-1, len(hist)))
+            popt = np.array([])
+            pcov = np.array([])
+            cut = [np.nan]
+            rload = np.nan
         return {
             'hist_x': bin_edges[:-1],
             'hist_y': hist,
