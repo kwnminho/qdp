@@ -18,13 +18,13 @@ def default_exp(dp):
         exp_name = os.listdir(search_path)[-1]
     except:
         # might be last experiment from yesterday
-        print "no data for {}, search yesterday's data".format(exp_date)
+        print("no data for {}, search yesterday's data".format(exp_date))
         exp_date = (datetime.datetime.now() - datetime.timedelta(1)).strftime("%Y_%m_%d")
         search_path = os.path.join(dp, exp_date)
         try:
             exp_name = os.listdir(search_path)[-1]
-        except Exception as e:
-            print "I tried my best but there is no data in today or yesterday's directories"
+        except:
+            print("I tried my best but there is no data in today or yesterday's directories")
     return os.path.join(exp_date, exp_name, 'results.hdf5')
 
 
@@ -40,7 +40,7 @@ def area(A1, m0, m1, s0, s1):
 def overlap(xc, A1, m0, m1, s0, s1):
     err0 = (1-A1)*np.sqrt(np.pi/2)*s0*(1-special.erf((xc-m0)/np.sqrt(2)/s0))
     err1 = A1*np.sqrt(np.pi/2)*s1*(special.erf((xc-m1)/np.sqrt(2)/s1)+special.erf(m1/np.sqrt(2)/s1))
-    return (err0+err1)/area(A0, A1, m0, m1, s0, s1)
+    return (err0+err1)/area(A1, m0, m1, s0, s1)
 
 
 # Relative Fraction in 1
@@ -79,7 +79,7 @@ def binomial_error(ns, n):
         if np.any(ns[r]==n[r].astype('int')):
             ns[ns[r]==n[r].astype('int')] = n[r]-0.5
         if np.any(n[r] == 0):
-            print "no loading observed"
+            print("no loading observed")
             errs[r] = np.full_like(ns[r], np.nan)
         else:
             errs[r] = (z/n[r].astype('float'))*np.sqrt(ns[r].astype('float')*(1.0-ns[r].astype('float')/n[r].astype('float')))
@@ -278,7 +278,7 @@ class QDP:
         retention = np.empty((
             len(self.experiments),
             len(self.experiments[0]['iterations'].items()),
-            self.experiments[0]['iterations'][0]['signal_data'].shape[2]
+            self.experiments[0]['iterations'][0]['signal_data'].shape[2]  # rois
         ))
         err = np.empty_like(retention)
         ivar = np.empty_like(retention)
@@ -300,7 +300,7 @@ class QDP:
                     else:
                         ivar[e, i] = 0
                 except IndexError:
-                    print "error reading (e,i): ({},{})".format(e, i)
+                    print("error reading (e,i): ({},{})".format(e, i))
         # if numpy format is requested return it
         if fmt == 'numpy' or fmt == 'np':
             return np.array([ivar, retention, err, loading])
