@@ -58,7 +58,7 @@ def get_iteration_variables(h5file, iterations):
     i_vars_desc = {}
     if iterations > 1:
         for i in h5file['settings/experiment/independentVariables/'].iteritems():
-            # how to eval numpy functions withoout namespace
+            # how to eval numpy functions without namespace
             if ivar.is_iterated(i[1]['function']):
                 i_vars.append(i[0])
                 i_vars_desc[i[0]] = {
@@ -181,7 +181,7 @@ class QDP:
         # set a data path to search from
         self.base_data_path = base_data_path
         # save current git hash
-        self.version = subprocess.check_output(['git', 'describe', '--always']).strip()
+        #self.version = subprocess.check_output(['git', 'describe', '--always']).strip()
 
     def apply_thresholds(self, cuts=None, exp='all', loading_shot=0):
         """Digitize data with existing thresholds (default) or with supplied thresholds.
@@ -196,14 +196,18 @@ class QDP:
         else:
             exps = self.experiments[exp]
         for e in exps:
+            #print e
             for i in e['iterations']:
-                meas, shots, rois = e['iterations'][i]['signal_data'].shape[:3]
+                meas, shots, rois = np.squeeze(e['iterations'][i]['signal_data']).shape[:3]
                 # digitize the data
                 quant = np.empty((shots, rois, meas))
                 for r in range(rois):
                     for s in range(shots):
                         # first bin is bin 1
-                        quant[s, r] = np.digitize(e['iterations'][i]['signal_data'][:, s, r, 0], cuts[r][s])
+                        try:
+                            quant[s, r] = np.digitize(np.squeeze(e['iterations'][i]['signal_data'])[:, s, r, 0], cuts[r][s])
+                        except:
+                            quant[s, r] = np.digitize(np.squeeze(e['iterations'][i]['signal_data'])[:, s, r], cuts[r][s])
                 e['iterations'][i]['quantized_data'] = quant.swapaxes(0, 2).swapaxes(1,2)  # to: (meas, shots, rois)
                 # calculate loading and retention for each shot
                 retention = np.empty((shots, rois))
@@ -219,11 +223,16 @@ class QDP:
                             quant[s, r]
                         ), axis=0)
                 loaded = np.copy(retention[loading_shot, :])
+
                 retention[loading_shot, :] = 0.0
                 reloading[loading_shot, :] = 0.0
+                #print retention/loaded
                 e['iterations'][i]['loading'] = loaded/meas
                 e['iterations'][i]['retention'] = retention/loaded
-                e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
+                try:
+                    e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
+                except:
+                    e['iterations'][i]['retention_err'] = binomial_error(retention[1], loaded)
                 e['iterations'][i]['loaded'] = loaded
                 e['iterations'][i]['reloading'] = reloading.astype('float')/(meas-loaded)
 
@@ -274,23 +283,44 @@ class QDP:
         array = array.swapaxes(1, 2)  # swap rois and shots axes
         return array
 
-    def get_retention(self, shot=1, fmt='dict'):
-        retention = np.empty((
-            len(self.experiments),
-            len(self.experiments[0]['iterations'].items()),
-            self.experiments[0]['iterations'][0]['signal_data'].shape[2]  # rois
-        ))
+    def get_retention(self, shot=1, fmt='dict',dataset='all'):
+         #initialize trap geometry as a 1 x 1 trap. Data may have additional structure if submeasurements are used
+        try:
+            num_roi_vert=self.experiments[0]['iterations'][0]['signal_data'].shape[2]
+        except:
+            num_roi_vert=1
+        try:
+            num_roi_horiz=self.experiments[0]['iterations'][0]['signal_data'].shape[3]
+        except:
+            num_roi_horiz=1
+        if len(self.experiments[0]['iterations'][0]['signal_data'].shape)>4:
+            print "The data might contain more dimensions that the developer thought."
+            raise NotImplementedError
+        # Allocated empty numpy array that matches with the size of experiment, iterations and the geometry/number of regions of interests.
+        retention = np.empty((len(self.experiments),len(self.experiments[0]['iterations'].items()),num_roi_vert*num_roi_horiz))
         err = np.empty_like(retention)
         ivar = np.empty_like(retention)
         loading = np.empty_like(retention)
+         # initialize with nan values
+        retention[:] = np.nan
+        err[:] = np.nan
+        ivar[:] = np.nan
+        loading[:] = np.nan
+        # Now visit experiments and iterations
         for e, exp in enumerate(self.experiments):
-            if len(exp['variable_list']) > 1:
+            if len(exp['variable_list']) > 2:
                 raise NotImplementedError
+            elif len(exp['variable_list']) ==2:
+                ivar_name = exp['variable_list'][0] # Temporary skipped exception. Picking the first iterated variable
             if len(exp['variable_list']) == 1:
                 ivar_name = exp['variable_list'][0]
             else:
                 ivar_name = None
-            for i in exp['iterations']:
+            if dataset=='all':
+                iteration_range=exp['iterations']
+            elif len(dataset)>1:
+                iteration_range=dataset
+            for i in iteration_range:
                 try:
                     retention[e, i] = exp['iterations'][i]['retention'][shot]
                     loading[e, i] = exp['iterations'][i]['loading'][()]
@@ -445,6 +475,10 @@ class QDP:
             'variables': {},
             'timeseries_data': [],  # cant be numpy array because of different measurement number
             'signal_data': [],  # cant be numpy array because of different measurement number
+            'Red_camera_dataX': [],
+            'FORT_camera_dataX': [],
+            'Red_camera_dataY': [],
+            'FORT_camera_dataY': []
         }
         # copy variable values over
         for v in h5_iter['variables'].iteritems():
@@ -452,11 +486,34 @@ class QDP:
         # copy measurement values over
         for m in h5_iter['measurements/'].iteritems():
             data = self.process_measurement(m[1], iteration_obj['variables'])
-            iteration_obj['timeseries_data'].append(data['timeseries_data'])
+            try:
+                iteration_obj['timeseries_data'].append(data['timeseries_data'])
+            except:
+                pass
             iteration_obj['signal_data'].append(data['signal_data'])
+            if np.isnan(data['Red_camera_dataX']):
+                pass
+            else:
+                iteration_obj['Red_camera_dataX'].append(data['Red_camera_dataX'])
+            if np.isnan(data['FORT_camera_dataX']):
+                pass
+            else:
+                 iteration_obj['FORT_camera_dataX'].append(data['FORT_camera_dataX'])
+            if np.isnan(data['Red_camera_dataY']):
+                pass
+            else:
+                 iteration_obj['Red_camera_dataY'].append(data['Red_camera_dataY'])
+            if np.isnan(data['FORT_camera_dataY']):
+                pass
+            else:
+                 iteration_obj['FORT_camera_dataY'].append(data['FORT_camera_dataY'])
         # cast as numpy arrays, compress sub measurements
         iteration_obj['signal_data'] = np.concatenate(iteration_obj['signal_data'])
-        iteration_obj['timeseries_data'] = np.concatenate(iteration_obj['timeseries_data'])
+        iteration_obj['Red_camera_dataX'] = np.nanmean(iteration_obj['Red_camera_dataX'])
+        iteration_obj['FORT_camera_dataX'] = np.nanmean(iteration_obj['FORT_camera_dataX'])
+        iteration_obj['Red_camera_dataY'] = np.nanmean(iteration_obj['Red_camera_dataY'])
+        iteration_obj['FORT_camera_dataY'] = np.nanmean(iteration_obj['FORT_camera_dataY'])
+        iteration_obj['timeseries_data'] = np.mean(iteration_obj['timeseries_data'])
         return iteration_obj
 
     def process_measurement(self, measurement, variables):
@@ -464,9 +521,29 @@ class QDP:
 
         returns numpy array of timeseries_data for each shot.
         """
-        sum_data = self.process_analyzed_counter_data(measurement, variables)
-        ts_data = self.process_raw_counter_data(measurement, variables)
-        return {'timeseries_data': ts_data, 'signal_data': sum_data}
+        try:
+            sum_data = self.process_analyzed_counter_data(measurement, variables)
+            ts_data = self.process_raw_counter_data(measurement, variables)
+        except:
+            sum_data = self.process_analyzed_camera_data(measurement, variables)
+            Red_data = self.process_analyzed_camera_data_Red(measurement, variables)
+            FORT_data = self.process_analyzed_camera_data_FORT(measurement, variables)
+            ts_data = []
+        return {'timeseries_data': ts_data, 'signal_data': sum_data, 'Red_camera_dataX': Red_data[0],'Red_camera_dataY': Red_data[1] ,'FORT_camera_dataX': FORT_data[0],'FORT_camera_dataY': FORT_data[1]}
+
+
+    def process_raw_camera_data(self, measurement, variables):
+        """Retrieve data from hdf5 measurement obj.
+
+        returns numpy array of camera_data for each shot.
+        """
+        total_shots = 0
+        array = []
+        for x in (0,1,2):
+            array.append([measurement['data/Andor_4522/shots/'+str(x)].value])
+            total_shots += 1
+       # total_shots = array.shape[1]
+        return self.format_counter_data(array, total_shots)
 
     def process_raw_counter_data(self, measurement, variables):
         """Retrieve data from hdf5 measurement obj.
@@ -480,6 +557,32 @@ class QDP:
         if total_shots > 2:
             print("Possibly too many shots, analysis might need to be updated")
         return self.format_counter_data(array, total_shots, drop_bins, meas_bins)
+
+    def process_analyzed_camera_data(self, measurement, variables):
+        """Retrieve data from hdf5 measurement obj.
+
+        returns numpy array of camera_data for each shot.
+        """
+        # stored format is (sub_measurement, shot, roi, 1)
+        # last dimension is the "roi column", an artifact of the camera roi definition
+        return np.array([measurement['analysis/squareROIsums'].value])
+    def process_analyzed_camera_data_FORT(self, measurement, variables):
+        """Retrieve data from hdf5 measurement obj.
+
+        returns numpy array of camera_data for each shot.
+        """
+        # stored format is (sub_measurement, shot, roi, 1)
+        # last dimension is the "roi column", an artifact of the camera roi definition
+        return np.array([measurement['data/camera_data/15102504/stats/X0'].value,measurement['data/camera_data/15102504/stats/Y0'].value])
+    def process_analyzed_camera_data_Red(self, measurement, variables):
+        """Retrieve data from hdf5 measurement obj.
+
+        returns numpy array of camera_data for each shot.
+        """
+        # stored format is (sub_measurement, shot, roi, 1)
+        # last dimension is the "roi column", an artifact of the camera roi definition
+        return np.array([measurement['data/camera_data/16483678/stats/X0'].value,measurement['data/camera_data/16483678/stats/Y0'].value])
+
 
     def process_analyzed_counter_data(self, measurement, variables):
         """Retrieve data from hdf5 measurement obj.
