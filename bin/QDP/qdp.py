@@ -183,7 +183,7 @@ class QDP:
         # save current git hash
         #self.version = subprocess.check_output(['git', 'describe', '--always']).strip()
 
-    def apply_thresholds(self, cuts=None, exp='all', loading_shot=0):
+    def apply_thresholds(self, cuts=None, exp='all', dataset='all',loading_shot=0):
         """Digitize data with existing thresholds (default) or with supplied thresholds.
 
         digitization bins are right open, i.e. the condition  for x in bin i b[i-1] <= x < b[i]
@@ -195,10 +195,21 @@ class QDP:
             exps = self.experiments
         else:
             exps = self.experiments[exp]
+
         for e in exps:
-            #print e
-            for i in e['iterations']:
-                meas, shots, rois = np.squeeze(e['iterations'][i]['signal_data']).shape[:3]
+            if dataset=='all':
+                iteration_range=e['iterations']
+            elif len(dataset)>1:
+                iteration_range=dataset
+            else:
+                raise NotImplementedError
+
+            for i in iteration_range:
+                try:
+                    meas, shots, rois = np.squeeze(e['iterations'][i]['signal_data']).shape[:3]
+                except ValueError:
+                    print 'Experiment might have prematurely ended. try apply_thresholds(dataset=range(0,{}))'.format(i-1)
+                    return
                 # digitize the data
                 quant = np.empty((shots, rois, meas))
                 for r in range(rois):
@@ -236,7 +247,7 @@ class QDP:
                 e['iterations'][i]['loaded'] = loaded
                 e['iterations'][i]['reloading'] = reloading.astype('float')/(meas-loaded)
 
-        return self.get_retention()
+        return self.get_retention(dataset=dataset)
 
     def format_counter_data(self, array, shots, drops, bins):
         """Formats raw 2D counter data into the required 4D format.
@@ -282,6 +293,50 @@ class QDP:
         array = array.swapaxes(0, 1)  # swap rois and measurement axes
         array = array.swapaxes(1, 2)  # swap rois and shots axes
         return array
+
+    def get_beampositions(self,fmt='dict',dataset='all'):
+        # Make an array filled with NaN with dimentions of the number of iterations.
+        temparray=np.empty((len(self.experiments),len(self.experiments[0]['iterations'].items())))
+        temparray[:]=np.NaN
+        # initialize list
+        ivar= temparray
+        RedX =  temparray
+        FORTX =  temparray
+        RedY =  temparray
+        FORTY =  temparray
+        for e, exp in enumerate(self.experiments):
+            if len(exp['variable_list']) == 1:
+                ivar_name = exp['variable_list'][0]
+            else:
+                ivar_name = None
+            if dataset=='all':
+                iteration_range=range(0,len(exp['iterations']))
+            elif len(dataset)>1:
+                iteration_range=dataset
+            for i in iteration_range:
+                try:
+                    RedY[e, i] = exp['iterations'][i]['Red_camera_dataY']
+                    FORTY[e, i] = exp['iterations'][i]['FORT_camera_dataY']
+                    RedX[e, i] = exp['iterations'][i]['Red_camera_dataX']
+                    FORTY[e, i] = exp['iterations'][i]['FORT_camera_dataX']
+                    if ivar_name is not None:
+                        ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
+                    else:
+                        ivar[e, i] = 0
+                except IndexError:
+                    print("error reading (e,i): ({},{})".format(e, i))
+        # if numpy format is requested return it
+        if fmt == 'numpy' or fmt == 'np':
+            return np.array([ivar, RedX, RedX, FORTX,FORTY])
+        else:
+            # if unrecognized return dict format
+            return {
+                    'ivar': ivar,
+                    'RedX': RedX,
+                    'RedY': RedY,
+                    'FORTX': FORTX,
+                    'FORTY': FORTY
+            }
 
     def get_retention(self, shot=1, fmt='dict',dataset='all'):
          #initialize trap geometry as a 1 x 1 trap. Data may have additional structure if submeasurements are used
@@ -486,33 +541,20 @@ class QDP:
         # copy measurement values over
         for m in h5_iter['measurements/'].iteritems():
             data = self.process_measurement(m[1], iteration_obj['variables'])
-            try:
-                iteration_obj['timeseries_data'].append(data['timeseries_data'])
-            except:
-                pass
-            iteration_obj['signal_data'].append(data['signal_data'])
-            if np.isnan(data['Red_camera_dataX']):
-                pass
-            else:
-                iteration_obj['Red_camera_dataX'].append(data['Red_camera_dataX'])
-            if np.isnan(data['FORT_camera_dataX']):
-                pass
-            else:
-                 iteration_obj['FORT_camera_dataX'].append(data['FORT_camera_dataX'])
-            if np.isnan(data['Red_camera_dataY']):
-                pass
-            else:
-                 iteration_obj['Red_camera_dataY'].append(data['Red_camera_dataY'])
-            if np.isnan(data['FORT_camera_dataY']):
-                pass
-            else:
-                 iteration_obj['FORT_camera_dataY'].append(data['FORT_camera_dataY'])
+            for keys in iteration_obj.keys():
+                try:
+                    iteration_obj[keys].append(data[keys])
+                except:
+                    pass
         # cast as numpy arrays, compress sub measurements
-        iteration_obj['signal_data'] = np.concatenate(iteration_obj['signal_data'])
-        iteration_obj['Red_camera_dataX'] = np.nanmean(iteration_obj['Red_camera_dataX'])
-        iteration_obj['FORT_camera_dataX'] = np.nanmean(iteration_obj['FORT_camera_dataX'])
-        iteration_obj['Red_camera_dataY'] = np.nanmean(iteration_obj['Red_camera_dataY'])
-        iteration_obj['FORT_camera_dataY'] = np.nanmean(iteration_obj['FORT_camera_dataY'])
+        try:
+            iteration_obj['signal_data'] = np.concatenate(iteration_obj['signal_data'])
+        except:
+            pass
+        iteration_obj['Red_camera_dataX'] = np.nanmedian(iteration_obj['Red_camera_dataX'])
+        iteration_obj['FORT_camera_dataX'] = np.nanmedian(iteration_obj['FORT_camera_dataX'])
+        iteration_obj['Red_camera_dataY'] = np.nanmedian(iteration_obj['Red_camera_dataY'])
+        iteration_obj['FORT_camera_dataY'] = np.nanmedian(iteration_obj['FORT_camera_dataY'])
         iteration_obj['timeseries_data'] = np.mean(iteration_obj['timeseries_data'])
         return iteration_obj
 
