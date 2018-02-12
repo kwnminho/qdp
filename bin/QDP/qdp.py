@@ -208,7 +208,7 @@ class QDP:
                 try:
                     meas, shots, rois = np.squeeze(e['iterations'][i]['signal_data']).shape[:3]
                 except ValueError:
-                    print 'Experiment might have prematurely ended. try apply_thresholds(dataset=range(0,{}))'.format(i-1)
+                    print 'Experiment might have prematurely ended. try apply_thresholds(dataset=range(0,{}))'.format(i)
                     return
                 # digitize the data
                 quant = np.empty((shots, rois, meas))
@@ -297,13 +297,18 @@ class QDP:
     def get_beampositions(self,fmt='dict',dataset='all'):
         # Make an array filled with NaN with dimentions of the number of iterations.
         temparray=np.empty((len(self.experiments),len(self.experiments[0]['iterations'].items())))
-        temparray[:]=np.NaN
         # initialize list
-        ivar= temparray
-        RedX =  temparray
-        FORTX =  temparray
-        RedY =  temparray
-        FORTY =  temparray
+        ivar= np.empty_like(temparray)
+        RedX =  np.empty_like(temparray)
+        FORTX =  np.empty_like(temparray)
+        RedY =  np.empty_like(temparray)
+        FORTY =  np.empty_like(temparray)
+        ivar[:]= np.NaN
+        RedX[:]= np.NaN
+        FORTX[:]= np.NaN
+        RedY[:]= np.NaN
+        FORTY[:]= np.NaN
+
         for e, exp in enumerate(self.experiments):
             if len(exp['variable_list']) == 1:
                 ivar_name = exp['variable_list'][0]
@@ -318,7 +323,7 @@ class QDP:
                     RedY[e, i] = exp['iterations'][i]['Red_camera_dataY']
                     FORTY[e, i] = exp['iterations'][i]['FORT_camera_dataY']
                     RedX[e, i] = exp['iterations'][i]['Red_camera_dataX']
-                    FORTY[e, i] = exp['iterations'][i]['FORT_camera_dataX']
+                    FORTX[e, i] = exp['iterations'][i]['FORT_camera_dataX']
                     if ivar_name is not None:
                         ivar[e, i] = exp['iterations'][i]['variables'][ivar_name][()]
                     else:
