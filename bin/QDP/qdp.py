@@ -573,9 +573,15 @@ class QDP:
             ts_data = self.process_raw_counter_data(measurement, variables)
         except:
             sum_data = self.process_analyzed_camera_data(measurement, variables)
+            ts_data = []
+
+        try:
             Red_data = self.process_analyzed_camera_data_Red(measurement, variables)
             FORT_data = self.process_analyzed_camera_data_FORT(measurement, variables)
-            ts_data = []
+        except:
+            Red_data = [np.nan,np.nan]
+            FORT_data=[np.nan,np.nan]
+
         return {'timeseries_data': ts_data, 'signal_data': sum_data, 'Red_camera_dataX': Red_data[0],'Red_camera_dataY': Red_data[1] ,'FORT_camera_dataX': FORT_data[0],'FORT_camera_dataY': FORT_data[1]}
 
 
