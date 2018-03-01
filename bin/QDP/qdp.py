@@ -538,11 +538,27 @@ class QDP:
             'Red_camera_dataX': [],
             'FORT_camera_dataX': [],
             'Red_camera_dataY': [],
-            'FORT_camera_dataY': []
+            'FORT_camera_dataY': [],
+            'AAS_redside':{},
+            'AAS_blueside':{}
         }
         # copy variable values over
         for v in h5_iter['variables'].iteritems():
             iteration_obj['variables'][v[0]] = v[1][()]
+        # copy AAS iteration analysis overlap
+        try:
+            for a in h5_iter['analysis/iter_positions/redside'].iteritems():
+                [key, value]=[str(a[0]), a[1].value]
+                iteration_obj['AAS_redside'][key]=value
+        except:
+            pass
+
+        try:
+            for a in h5_iter['analysis/iter_positions/blueside'].iteritems():
+                [key, value]=[str(a[0]), a[1].value]
+                iteration_obj['AAS_blueside'][key]=value
+        except:
+            pass
         # copy measurement values over
         for m in h5_iter['measurements/'].iteritems():
             data = self.process_measurement(m[1], iteration_obj['variables'])
@@ -556,11 +572,7 @@ class QDP:
             iteration_obj['signal_data'] = np.concatenate(iteration_obj['signal_data'])
         except:
             pass
-        iteration_obj['Red_camera_dataX'] = np.nanmedian(iteration_obj['Red_camera_dataX'])
-        iteration_obj['FORT_camera_dataX'] = np.nanmedian(iteration_obj['FORT_camera_dataX'])
-        iteration_obj['Red_camera_dataY'] = np.nanmedian(iteration_obj['Red_camera_dataY'])
-        iteration_obj['FORT_camera_dataY'] = np.nanmedian(iteration_obj['FORT_camera_dataY'])
-        iteration_obj['timeseries_data'] = np.mean(iteration_obj['timeseries_data'])
+
         return iteration_obj
 
     def process_measurement(self, measurement, variables):
@@ -626,7 +638,7 @@ class QDP:
         """
         # stored format is (sub_measurement, shot, roi, 1)
         # last dimension is the "roi column", an artifact of the camera roi definition
-        return np.array([measurement['data/camera_data/15102504/stats/X0'].value,measurement['data/camera_data/15102504/stats/Y0'].value])
+        return np.array([measurement['data/camera_data/16483678/stats/X1'].value,measurement['data/camera_data/16483678/stats/Y1'].value])
     def process_analyzed_camera_data_Red(self, measurement, variables):
         """Retrieve data from hdf5 measurement obj.
 
