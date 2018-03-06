@@ -8,7 +8,7 @@ import subprocess
 import json
 import ivar
 import datetime
-
+import cPickle as pickle
 
 def default_exp(dp):
     """Function that generates the path to the default data folder, relative to dp"""
@@ -100,6 +100,14 @@ def jsonify(data):
             value = value.tolist()
         json_data[key] = value
     return json_data
+
+def load_qdp(filename):
+    file = open(filename,'r')
+    qdp_pickle = file.read()
+    file.close()
+    qdp=pickle.loads(qdp_pickle)
+    print "qdp has been imported from :{}".format(filename)
+    return qdp
 
 
 class QDP:
@@ -248,6 +256,14 @@ class QDP:
                 e['iterations'][i]['reloading'] = reloading.astype('float')/(meas-loaded)
 
         return self.get_retention(dataset=dataset)
+
+    def save_qdp(self, filename=None, filename_prefix='data', path=None):
+        if filename==None:
+            filename='qdp'
+        file = open(filename,'w')
+        file.write(pickle.dumps(self))
+        file.close()
+        print "qdp has been dumped to :{}".format(filename)
 
     def format_counter_data(self, array, shots, drops, bins):
         """Formats raw 2D counter data into the required 4D format.
