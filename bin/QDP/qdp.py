@@ -549,6 +549,8 @@ class QDP:
     def process_iteration(self, h5_iter):
         iteration_obj = {
             'variables': {},
+            'timestamp_iteration':[], # gets start_time attribute in each iteration.
+            'timestamp_measurement':[], # gets start_time attribute in each iteration.
             'timeseries_data': [],  # cant be numpy array because of different measurement number
             'signal_data': [],  # cant be numpy array because of different measurement number
             'Red_camera_dataX': [],
@@ -561,6 +563,10 @@ class QDP:
         # copy variable values over
         for v in h5_iter['variables'].iteritems():
             iteration_obj['variables'][v[0]] = v[1][()]
+
+        # Copy iteration timestamp overlap
+        iteration_obj['timestamp_iteration']=h5_iter.attrs.__getitem__('start_time')
+
         # copy AAS iteration analysis overlap
         try:
             for a in h5_iter['analysis/iter_positions/redside'].iteritems():
@@ -575,6 +581,7 @@ class QDP:
                 iteration_obj['AAS_blueside'][key]=value
         except:
             pass
+
         # copy measurement values over
         for m in h5_iter['measurements/'].iteritems():
             data = self.process_measurement(m[1], iteration_obj['variables'])
@@ -583,6 +590,7 @@ class QDP:
                     iteration_obj[keys].append(data[keys])
                 except:
                     pass
+            iteration_obj['timestamp_measurement'].append(m[1].attrs.__getitem__('start_time'))
         # cast as numpy arrays, compress sub measurements
         try:
             iteration_obj['signal_data'] = np.concatenate(iteration_obj['signal_data'])
