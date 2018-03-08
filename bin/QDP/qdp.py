@@ -79,7 +79,6 @@ def binomial_error(ns, n):
         if np.any(ns[r]==n[r].astype('int')):
             ns[ns[r]==n[r].astype('int')] = n[r]-0.5
         if np.any(n[r] == 0):
-            print("no loading observed")
             errs[r] = np.full_like(ns[r], np.nan)
         else:
             errs[r] = (z/n[r].astype('float'))*np.sqrt(ns[r].astype('float')*(1.0-ns[r].astype('float')/n[r].astype('float')))
@@ -215,7 +214,7 @@ class QDP:
             for i in iteration_range:
                 try:
                     meas, shots, rois = np.squeeze(e['iterations'][i]['signal_data']).shape[:3]
-                except ValueError:
+                except:
                     print 'Experiment might have prematurely ended. try apply_thresholds(dataset=range(0,{}))'.format(i)
                     return
                 # digitize the data
@@ -245,15 +244,18 @@ class QDP:
 
                 retention[loading_shot, :] = 0.0
                 reloading[loading_shot, :] = 0.0
-                #print retention/loaded
-                e['iterations'][i]['loading'] = loaded/meas
-                e['iterations'][i]['retention'] = retention/loaded
+
+                e['iterations'][i]['loading'] = np.divide(loaded,meas)
+                try:
+                    e['iterations'][i]['retention'] = np.divide(retention,loaded)
+                except:
+                    print "Encountered error for iterations : {}".format(i)
                 try:
                     e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
                 except:
                     e['iterations'][i]['retention_err'] = binomial_error(retention[1], loaded)
                 e['iterations'][i]['loaded'] = loaded
-                e['iterations'][i]['reloading'] = reloading.astype('float')/(meas-loaded)
+                e['iterations'][i]['reloading'] = np.divide(reloading.astype('float'),(meas-loaded))
 
         return self.get_retention(dataset=dataset)
 
@@ -331,7 +333,7 @@ class QDP:
             else:
                 ivar_name = None
             if dataset=='all':
-                iteration_range=range(0,len(exp['iterations']))
+                iteration_range=exp['iterations']
             elif len(dataset)>1:
                 iteration_range=dataset
             for i in iteration_range:
