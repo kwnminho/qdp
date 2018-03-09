@@ -191,6 +191,7 @@ class QDP:
         #self.version = subprocess.check_output(['git', 'describe', '--always']).strip()
 
     def apply_thresholds(self, cuts=None, exp='all', dataset='all',loading_shot=0):
+        np.seterr(divide='ignore', invalid='ignore')
         """Digitize data with existing thresholds (default) or with supplied thresholds.
 
         digitization bins are right open, i.e. the condition  for x in bin i b[i-1] <= x < b[i]
