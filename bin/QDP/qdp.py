@@ -190,7 +190,7 @@ class QDP:
         # save current git hash
         #self.version = subprocess.check_output(['git', 'describe', '--always']).strip()
 
-    def apply_thresholds(self, cuts=None, exp='all', dataset='all',loading_shot=0):
+    def apply_thresholds(self, cuts=None, exp='all', dataset='all',loading_shot=0,result_shot=1):
         np.seterr(divide='ignore', invalid='ignore')
         """Digitize data with existing thresholds (default) or with supplied thresholds.
 
@@ -227,8 +227,15 @@ class QDP:
                             quant[s, r] = np.digitize(np.squeeze(e['iterations'][i]['signal_data'])[:, s, r, 0], cuts[r][s])
                         except:
                             quant[s, r] = np.digitize(np.squeeze(e['iterations'][i]['signal_data'])[:, s, r], cuts[r][s])
+                    # Previous version supports only single-atom cases.. MK 2018.07.01
+                    # For now, only single atom case will be digitized to 1, and all the
+                        quant[s, r][quant[s, r]>1]=0
+                        #print quant[s, r]
                 e['iterations'][i]['quantized_data'] = quant.swapaxes(0, 2).swapaxes(1,2)  # to: (meas, shots, rois)
                 # calculate loading and retention for each shot
+                # if shots<len(shots_to_analyze):
+                #     print "Requested shots may not exist."
+                #     return
                 retention = np.empty((shots, rois))
                 reloading = np.empty((shots, rois))
                 for r in range(rois):
@@ -241,11 +248,10 @@ class QDP:
                             np.logical_not(quant[loading_shot, r]),
                             quant[s, r]
                         ), axis=0)
+
+
                 loaded = np.copy(retention[loading_shot, :])
-
-                retention[loading_shot, :] = 0.0
-                reloading[loading_shot, :] = 0.0
-
+                retention=retention[result_shot, :]
                 e['iterations'][i]['loading'] = np.divide(loaded,meas)
                 try:
                     e['iterations'][i]['retention'] = np.divide(retention,loaded)
