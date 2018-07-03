@@ -248,19 +248,20 @@ class QDP:
                             np.logical_not(quant[loading_shot, r]),
                             quant[s, r]
                         ), axis=0)
-
+                #print retention
 
                 loaded = np.copy(retention[loading_shot, :])
-                retention=retention[result_shot, :]
+                retention[loading_shot, :]=np.NaN
+                retained=np.copy(retention)#np.copy(retention[result_shot, :])
                 e['iterations'][i]['loading'] = np.divide(loaded,meas)
                 try:
-                    e['iterations'][i]['retention'] = np.divide(retention,loaded)
+                    e['iterations'][i]['retention'] = np.divide(retained,loaded)
                 except:
                     print "Encountered error for iterations : {}".format(i)
                 try:
-                    e['iterations'][i]['retention_err'] = binomial_error(retention, loaded)
+                    e['iterations'][i]['retention_err'] = binomial_error(retained, loaded)
                 except:
-                    e['iterations'][i]['retention_err'] = binomial_error(retention[1], loaded)
+                    e['iterations'][i]['retention_err'] = binomial_error(retained[1], loaded)
                 e['iterations'][i]['loaded'] = loaded
                 e['iterations'][i]['reloading'] = np.divide(reloading.astype('float'),(meas-loaded))
 
